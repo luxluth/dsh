@@ -1,13 +1,12 @@
 use internals::get_internal_functions_map;
 use std::{
+    env,
     io::{self, prelude::*},
     sync::{Arc, Mutex},
 };
 
 mod cmd;
 mod internals;
-
-const PROMPT: &[u8] = b"# ";
 
 struct Shell {
     should_stop: Arc<Mutex<bool>>,
@@ -25,15 +24,33 @@ impl Shell {
     fn run(&mut self) -> Result<(), Box<dyn std::error::Error>> {
         let mut stdout = io::stdout();
         let stdin = io::stdin();
+        let hostname_file = std::path::Path::new("/etc/hostname");
+        if hostname_file.exists() {
+            let mut f = std::fs::File::open(hostname_file).unwrap();
+            let mut content = String::new();
+            let _ = f.read_to_string(&mut content);
+
+            if !content.is_empty() {
+                env::set_var("hostname", content.trim());
+            }
+        }
+
+        let mut error_code = 0;
 
         loop {
+            let prompt = format!(
+                "{}@{} [{}] ",
+                env::var("USERNAME").unwrap_or("".to_string()),
+                env::var("hostname").unwrap_or("".to_string()),
+                error_code,
+            );
             let mut buffer = String::new();
             // Check if the shell should stop.
             if *self.should_stop.lock().unwrap() {
                 break;
             }
 
-            stdout.write_all(PROMPT)?;
+            stdout.write_all(prompt.as_bytes())?;
             stdout.flush()?;
 
             if let Ok(read) = stdin.read_line(&mut buffer) {
@@ -45,16 +62,18 @@ impl Shell {
                                 "exit" => {
                                     break;
                                 }
-                                "clear" => {
+                                "clear" | "cd" => {
                                     if let Some(func) = self.internals.get(&cmd.name) {
                                         match func(cmd) {
                                             Ok(code) => {
+                                                error_code = code.code().unwrap_or(127);
                                                 std::env::set_var(
                                                     "STATUS",
                                                     code.code().unwrap_or(127).to_string(),
                                                 );
                                             }
                                             Err(e) => {
+                                                error_code = 1;
                                                 eprintln!("{e}");
                                             }
                                         };
@@ -62,12 +81,14 @@ impl Shell {
                                 }
                                 _ => match internals::run(cmd) {
                                     Ok(code) => {
+                                        error_code = code.code().unwrap_or(127);
                                         std::env::set_var(
                                             "STATUS",
                                             code.code().unwrap_or(127).to_string(),
                                         );
                                     }
                                     Err(e) => {
+                                        error_code = 1;
                                         eprintln!("{e}");
                                     }
                                 },

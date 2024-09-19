@@ -1,10 +1,7 @@
 use internals::get_internal_functions_map;
 use std::{
     io::{self, prelude::*},
-    sync::{
-        mpsc::{Receiver, Sender},
-        Arc, Mutex,
-    },
+    sync::{Arc, Mutex},
 };
 
 mod cmd;
@@ -12,28 +9,17 @@ mod internals;
 
 const PROMPT: &[u8] = b"# ";
 
-#[derive(Debug)]
-enum ShellMessage {
-    STOP,
-}
-
 struct Shell {
     should_stop: Arc<Mutex<bool>>,
-    rx: Receiver<ShellMessage>,
     internals: internals::InternalFuncMap,
 }
 
 impl Shell {
-    fn new() -> (Self, Sender<ShellMessage>) {
-        let (sx, rx) = std::sync::mpsc::channel::<ShellMessage>();
-        (
-            Self {
-                should_stop: Arc::new(Mutex::new(false)),
-                rx,
-                internals: get_internal_functions_map(),
-            },
-            sx,
-        )
+    fn new() -> Self {
+        Self {
+            should_stop: Arc::new(Mutex::new(false)),
+            internals: get_internal_functions_map(),
+        }
     }
 
     fn run(&mut self) -> Result<(), Box<dyn std::error::Error>> {
@@ -103,9 +89,7 @@ impl Shell {
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let (mut shell, _sx) = Shell::new();
-
-    // Run the shell and handle messages
+    let mut shell = Shell::new();
     shell.run()?;
 
     Ok(())

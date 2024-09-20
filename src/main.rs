@@ -1,16 +1,16 @@
-use internals::get_internal_functions_map;
+use dsh::{
+    cmd,
+    internals::{self, get_internal_functions_map},
+};
 use std::{
     env,
     io::{self, prelude::*},
     sync::{Arc, Mutex},
 };
 
-mod cmd;
-mod internals;
-
 struct Shell {
     should_stop: Arc<Mutex<bool>>,
-    internals: internals::InternalFuncMap,
+    internals: dsh::internals::InternalFuncMap,
 }
 
 impl Shell {
@@ -22,8 +22,8 @@ impl Shell {
     }
 
     fn run(&mut self) -> Result<(), Box<dyn std::error::Error>> {
-        let mut stdout = io::stdout();
         let stdin = io::stdin();
+        let mut stdout = io::stdout();
         let hostname_file = std::path::Path::new("/etc/hostname");
         if hostname_file.exists() {
             let mut f = std::fs::File::open(hostname_file).unwrap();

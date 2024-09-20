@@ -1,4 +1,4 @@
-use std::{collections::HashMap, env};
+use std::{collections::HashMap, env, iter::Peekable};
 
 #[derive(Debug)]
 pub struct Cmd {
@@ -188,6 +188,131 @@ fn test_expand_var_escape() {
     let new_arg = expand_vars_into_arg(&overridemap, "$VAR\\$VAR");
 
     assert_eq!(new_arg, "Nothing$VAR".to_string());
+}
+
+struct CmdParser;
+#[derive(Debug, thiserror::Error)]
+pub enum CmdParsingError {}
+
+#[derive(Debug)]
+pub struct Col(u32);
+
+#[derive(Debug)]
+pub enum Sym {
+    PIPE,
+    EQUAL,
+}
+
+#[derive(Debug)]
+pub enum Token {
+    Word(String, Col),
+    Symbol(Sym, Col),
+    Str(String, Col),
+}
+
+fn make_word(it: &mut Peekable<std::str::Chars<'_>>, col: &mut u32) -> Token {
+    let mut word = String::new();
+    let mut is_escaped = false;
+
+    let first_char = it.next().unwrap();
+    if first_char == '$' || first_char.is_alphanumeric() || first_char == '_' {
+        word.push(first_char);
+    }
+
+    while let Some(c) = it.peek() {
+        if is_escaped {
+            word.push(it.next().unwrap());
+            is_escaped = false;
+            continue;
+        }
+
+        if c.is_alphanumeric() || *c == '_' {
+            word.push(it.next().unwrap());
+        } else if *c == '\\' && !is_escaped {
+            *col += 1;
+            is_escaped = true;
+            it.next();
+            continue;
+        } else {
+            break;
+        }
+    }
+
+    let len = word.len() as u32;
+    let tok = Token::Word(word, Col(*col));
+    *col += len;
+    return tok;
+}
+
+fn build_string(it: &mut Peekable<std::str::Chars<'_>>, col: &mut u32, del: char) -> Token {
+    let mut string = String::new();
+    let mut is_escaped = false;
+    it.next().unwrap();
+
+    while let Some(c) = it.next() {
+        if c == del && !is_escaped {
+            break;
+        }
+        if c == '\\' && !is_escaped {
+            *col += 1;
+            is_escaped = true;
+            continue;
+        }
+        string.push(c);
+        is_escaped = false;
+    }
+
+    let len = string.len() + 2;
+    let tok = Token::Str(string, Col(*col));
+    *col += len as u32;
+    return tok;
+}
+
+impl Token {
+    pub fn tokenize(line: &str) -> Result<Vec<Token>, CmdParsingError> {
+        let mut it = line.chars().into_iter().peekable();
+        let mut tokens = vec![];
+        let mut col: u32 = 0;
+
+        while let Some(c) = it.peek() {
+            match c {
+                ' ' => {
+                    col += 1;
+                    it.next();
+                }
+                '=' => {
+                    tokens.push(Token::Symbol(Sym::EQUAL, Col(col)));
+                    it.next();
+                    col += 1;
+                }
+                '|' => {
+                    tokens.push(Token::Symbol(Sym::PIPE, Col(col)));
+                    it.next();
+                    col += 1;
+                }
+                '"' => {
+                    tokens.push(build_string(&mut it, &mut col, '"'));
+                }
+                '\'' => {
+                    tokens.push(build_string(&mut it, &mut col, '\''));
+                }
+                _ => {
+                    tokens.push(make_word(&mut it, &mut col));
+                }
+            }
+        }
+
+        Ok(tokens)
+    }
+}
+
+impl CmdParser {
+    pub fn parse(line: &str) -> Result<Vec<Cmd>, CmdParsingError> {
+        let cmds = vec![];
+        let _tokens = Token::tokenize(line)?;
+
+        Ok(cmds)
+    }
 }
 
 impl Cmd {

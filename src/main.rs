@@ -66,15 +66,35 @@ impl Shell {
                                     if let Some(func) = self.internals.get(&cmd.name) {
                                         match func(cmd) {
                                             Ok(code) => {
-                                                error_code = code.code().unwrap_or(127);
+                                                error_code = code.code().unwrap_or(-1);
                                                 std::env::set_var(
                                                     "STATUS",
-                                                    code.code().unwrap_or(127).to_string(),
+                                                    code.code().unwrap_or(-1).to_string(),
                                                 );
                                             }
                                             Err(e) => {
-                                                error_code = 1;
                                                 eprintln!("{e}");
+                                                match e {
+                                                    internals::CommandError::IOError(_) => {
+                                                        error_code = 1;
+                                                        std::env::set_var("STATUS", 1.to_string());
+                                                    }
+                                                    internals::CommandError::Custom {
+                                                        status,
+                                                        ..
+                                                    }
+                                                    | internals::CommandError::ChildSpawnError(
+                                                        _,
+                                                        _,
+                                                        status,
+                                                    ) => {
+                                                        error_code = status;
+                                                        std::env::set_var(
+                                                            "STATUS",
+                                                            status.to_string(),
+                                                        );
+                                                    }
+                                                }
                                             }
                                         };
                                     }
@@ -88,8 +108,22 @@ impl Shell {
                                         );
                                     }
                                     Err(e) => {
-                                        error_code = 1;
                                         eprintln!("{e}");
+                                        match e {
+                                            internals::CommandError::IOError(_) => {
+                                                error_code = 1;
+                                                std::env::set_var("STATUS", 1.to_string());
+                                            }
+                                            internals::CommandError::Custom { status, .. }
+                                            | internals::CommandError::ChildSpawnError(
+                                                _,
+                                                _,
+                                                status,
+                                            ) => {
+                                                error_code = status;
+                                                std::env::set_var("STATUS", status.to_string());
+                                            }
+                                        }
                                     }
                                 },
                             }

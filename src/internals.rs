@@ -8,23 +8,42 @@ use std::{
 
 use crate::cmd::Cmd;
 
-pub type InternalFunc = fn(Cmd) -> Result<ExitStatus, Box<dyn std::error::Error>>;
+pub type InternalFunc = fn(Cmd) -> Result<ExitStatus, CommandError>;
 pub type InternalFuncMap = HashMap<String, InternalFunc>;
 
-pub fn clear(_: Cmd) -> Result<ExitStatus, Box<dyn std::error::Error>> {
+#[derive(thiserror::Error, Debug)]
+pub enum CommandError {
+    #[error("[io]: {0}")]
+    IOError(#[from] io::Error),
+    #[error("[{prog_name}]: {message}")]
+    Custom {
+        prog_name: String,
+        message: String,
+        status: i32,
+    },
+
+    #[error("[{1}]: Unable to launch this program\nCause: {0}")]
+    ChildSpawnError(io::Error, String, i32),
+}
+
+pub fn clear(_: Cmd) -> Result<ExitStatus, CommandError> {
     print!("\x1b[2J\x1b[H");
     io::stdout().flush()?;
     Ok(ExitStatus::from_raw(0))
 }
 
-pub fn cd(Cmd { args, .. }: Cmd) -> Result<ExitStatus, Box<dyn std::error::Error>> {
+pub fn cd(Cmd { args, .. }: Cmd) -> Result<ExitStatus, CommandError> {
     if args.is_empty() {
         if let Ok(dir_path) = env::var("HOME") {
             let new_cwd = std::path::Path::new(&dir_path);
 
             if let Err(e) = env::set_current_dir(&new_cwd) {
-                eprintln!("cd: {}", e);
-                Ok(ExitStatus::from_raw(1))
+                let message = format!("{}", e);
+                Err(CommandError::Custom {
+                    prog_name: "cmd".into(),
+                    message,
+                    status: 1,
+                })
             } else {
                 Ok(ExitStatus::from_raw(0))
             }
@@ -42,8 +61,12 @@ pub fn cd(Cmd { args, .. }: Cmd) -> Result<ExitStatus, Box<dyn std::error::Error
         let new_cwd = std::path::Path::new(&dir_path);
 
         if let Err(e) = env::set_current_dir(&new_cwd) {
-            eprintln!("cd: {}", e);
-            Ok(ExitStatus::from_raw(1))
+            let message = format!("{}", e);
+            Err(CommandError::Custom {
+                prog_name: "cmd".into(),
+                message,
+                status: 1,
+            })
         } else {
             Ok(ExitStatus::from_raw(0))
         }
@@ -74,29 +97,32 @@ pub fn run(
         name,
         args,
     }: Cmd,
-) -> Result<ExitStatus, Box<dyn std::error::Error>> {
+) -> Result<ExitStatus, CommandError> {
     let previous_vars_state = env::vars();
 
     for (k, v) in &variables_overrides {
         env::set_var(k, v);
     }
 
-    if let Ok(mut child) = Command::new(name.as_str())
+    match Command::new(name.as_str())
         .stdin(Stdio::inherit())
         .stdout(Stdio::inherit())
         .stderr(Stdio::inherit())
         .args(args)
         .spawn()
     {
-        if let Ok(status) = child.wait() {
-            resetvars(variables_overrides, previous_vars_state);
-            return Ok(status);
-        } else {
-            resetvars(variables_overrides, previous_vars_state);
-            return Ok(ExitStatus::from_raw(127));
+        Ok(mut child) => {
+            if let Ok(status) = child.wait() {
+                resetvars(variables_overrides, previous_vars_state);
+                return Ok(status);
+            } else {
+                resetvars(variables_overrides, previous_vars_state);
+                return Ok(ExitStatus::from_raw(127));
+            }
         }
-    } else {
-        resetvars(variables_overrides, previous_vars_state);
-        return Ok(ExitStatus::from_raw(127));
+        Err(e) => {
+            resetvars(variables_overrides, previous_vars_state);
+            return Err(CommandError::ChildSpawnError(e, name, 127));
+        }
     }
 }

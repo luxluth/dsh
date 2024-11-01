@@ -2,27 +2,38 @@ use dsh::{
     cmd,
     internals::{self, get_internal_functions_map},
 };
+
+use nix::sys::signal::{self, SigHandler, Signal};
 use std::{
     env,
     io::{self, prelude::*},
-    sync::{Arc, Mutex},
+    os::fd::AsRawFd,
+    sync::atomic::{AtomicBool, AtomicI32, Ordering},
 };
 
+static NEED_STOP: AtomicBool = AtomicBool::new(false);
+static STDIN_FD: AtomicI32 = AtomicI32::new(0);
+
 struct Shell {
-    should_stop: Arc<Mutex<bool>>,
-    internals: dsh::internals::InternalFuncMap,
+    internals: Option<dsh::internals::InternalFuncMap>,
+}
+
+extern "C" fn handle_sighup(signal: libc::c_int) {
+    let signal = Signal::try_from(signal).unwrap();
+    NEED_STOP.store(signal == Signal::SIGHUP, Ordering::Relaxed);
+    std::process::exit(0);
 }
 
 impl Shell {
-    fn new() -> Self {
-        Self {
-            should_stop: Arc::new(Mutex::new(false)),
-            internals: get_internal_functions_map(),
-        }
+    const fn new() -> Self {
+        Self { internals: None }
     }
 
     fn run(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+        self.internals = Some(get_internal_functions_map());
+
         let stdin = io::stdin();
+        STDIN_FD.store(stdin.as_raw_fd(), Ordering::Relaxed);
         let mut stdout = io::stdout();
         let hostname_file = std::path::Path::new("/etc/hostname");
         if hostname_file.exists() {
@@ -46,7 +57,7 @@ impl Shell {
             );
             let mut buffer = String::new();
             // Check if the shell should stop.
-            if *self.should_stop.lock().unwrap() {
+            if NEED_STOP.load(Ordering::Relaxed) {
                 break;
             }
 
@@ -63,7 +74,9 @@ impl Shell {
                                     break;
                                 }
                                 "clear" | "cd" => {
-                                    if let Some(func) = self.internals.get(&cmd.name) {
+                                    if let Some(func) =
+                                        self.internals.as_ref().unwrap().get(&cmd.name)
+                                    {
                                         match func(cmd) {
                                             Ok(code) => {
                                                 error_code = code.code().unwrap_or(-1);
@@ -144,6 +157,9 @@ impl Shell {
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let handler = SigHandler::Handler(handle_sighup);
+    unsafe { signal::signal(Signal::SIGHUP, handler) }.unwrap();
+    unsafe { signal::signal(Signal::SIGINT, handler) }.unwrap();
     let mut shell = Shell::new();
     shell.run()?;
 

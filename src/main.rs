@@ -13,6 +13,7 @@ use std::{
 
 static NEED_STOP: AtomicBool = AtomicBool::new(false);
 static STDIN_FD: AtomicI32 = AtomicI32::new(0);
+static CAN_STOP: AtomicBool = AtomicBool::new(true);
 
 struct Shell {
     internals: Option<dsh::internals::InternalFuncMap>,
@@ -20,8 +21,16 @@ struct Shell {
 
 extern "C" fn handle_sighup(signal: libc::c_int) {
     let signal = Signal::try_from(signal).unwrap();
-    NEED_STOP.store(signal == Signal::SIGHUP, Ordering::Relaxed);
-    std::process::exit(0);
+    if CAN_STOP.load(Ordering::Relaxed) {
+        NEED_STOP.store(signal == Signal::SIGHUP, Ordering::Relaxed);
+        std::process::exit(0);
+    }
+}
+
+extern "C" fn handle_sigint(_signal: libc::c_int) {
+    // let signal = Signal::try_from(signal).unwrap();
+    // NEED_STOP.store(signal == Signal::SIGINT, Ordering::Relaxed);
+    // std::process::exit(0);
 }
 
 impl Shell {
@@ -68,6 +77,7 @@ impl Shell {
                 if read > 0 {
                     let line = buffer.trim();
                     if !line.is_empty() {
+                        CAN_STOP.store(false, Ordering::Relaxed);
                         if let Ok(cmd) = cmd::Cmd::new(line) {
                             match cmd.name.as_str() {
                                 "exit" => {
@@ -107,6 +117,16 @@ impl Shell {
                                                             status.to_string(),
                                                         );
                                                     }
+                                                    internals::CommandError::ChildExit(
+                                                        _error,
+                                                        status,
+                                                    ) => {
+                                                        error_code = status;
+                                                        std::env::set_var(
+                                                            "STATUS",
+                                                            status.to_string(),
+                                                        );
+                                                    }
                                                 }
                                             }
                                         };
@@ -136,11 +156,16 @@ impl Shell {
                                                 error_code = status;
                                                 std::env::set_var("STATUS", status.to_string());
                                             }
+                                            internals::CommandError::ChildExit(_error, status) => {
+                                                error_code = status;
+                                                std::env::set_var("STATUS", status.to_string());
+                                            }
                                         }
                                     }
                                 },
                             }
                         }
+                        CAN_STOP.store(true, Ordering::Relaxed);
                     }
                 } else {
                     // EOF
@@ -157,9 +182,10 @@ impl Shell {
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let handler = SigHandler::Handler(handle_sighup);
-    unsafe { signal::signal(Signal::SIGHUP, handler) }.unwrap();
-    unsafe { signal::signal(Signal::SIGINT, handler) }.unwrap();
+    let hup_handler = SigHandler::Handler(handle_sighup);
+    let int_handler = SigHandler::Handler(handle_sigint);
+    unsafe { signal::signal(Signal::SIGHUP, hup_handler) }.unwrap();
+    unsafe { signal::signal(Signal::SIGINT, int_handler) }.unwrap();
     let mut shell = Shell::new();
     shell.run()?;
 

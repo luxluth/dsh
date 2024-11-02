@@ -24,6 +24,8 @@ pub enum CommandError {
 
     #[error("[{1}]: Unable to launch this program\nCause: {0}")]
     ChildSpawnError(io::Error, String, i32),
+    #[error("")]
+    ChildExit(io::Error, i32),
 }
 
 pub fn clear(_: Cmd) -> Result<ExitStatus, CommandError> {
@@ -111,15 +113,16 @@ pub fn run(
         .args(args)
         .spawn()
     {
-        Ok(mut child) => {
-            if let Ok(status) = child.wait() {
+        Ok(mut child) => match child.wait() {
+            Ok(status) => {
                 resetvars(variables_overrides, previous_vars_state);
                 return Ok(status);
-            } else {
-                resetvars(variables_overrides, previous_vars_state);
-                return Ok(ExitStatus::from_raw(127));
             }
-        }
+            Err(e) => {
+                resetvars(variables_overrides, previous_vars_state);
+                return Err(CommandError::ChildExit(e, 130));
+            }
+        },
         Err(e) => {
             resetvars(variables_overrides, previous_vars_state);
             return Err(CommandError::ChildSpawnError(e, name, 127));

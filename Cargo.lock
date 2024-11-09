@@ -28,6 +28,7 @@ dependencies = [
  "nix",
  "termion",
  "tinytoken",
+ "unicode-width",
 ]
 
 [[package]]
@@ -97,3 +98,9 @@ name = "tinytoken"
 version = "0.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "415e69dcc64934a3e572d35b430c0a299e82b010763b07b2cbe9a990d0bd458a"
+
+[[package]]
+name = "unicode-width"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1fc81956842c57dac11422a97c3b8195a1ff727f06e85c84ed2e8aa277c9a0fd"

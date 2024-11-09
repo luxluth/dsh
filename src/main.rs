@@ -7,6 +7,7 @@ use dsh::{
     },
 };
 use nix::sys::signal::{self, SigHandler, Signal};
+use std::ops::{Index, IndexMut};
 use std::{
     env,
     io::{self, prelude::*},
@@ -24,6 +25,7 @@ use termion::{
     raw::IntoRawMode,
 };
 use tinytoken::Tokenizer;
+use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 static NEED_STOP: AtomicBool = AtomicBool::new(false);
 static STDIN_FD: AtomicI32 = AtomicI32::new(0);
@@ -68,6 +70,20 @@ struct TextBuffer {
     _buf: Vec<char>,
 }
 
+impl Index<usize> for TextBuffer {
+    type Output = char;
+
+    fn index(&self, index: usize) -> &Self::Output {
+        &self._buf[index]
+    }
+}
+
+impl IndexMut<usize> for TextBuffer {
+    fn index_mut<'a>(&'a mut self, i: usize) -> &'a mut char {
+        &mut self._buf[i]
+    }
+}
+
 impl TextBuffer {
     pub fn new() -> Self {
         Self {
@@ -95,6 +111,14 @@ impl TextBuffer {
 
     pub fn len(&self) -> usize {
         return self._buf.len();
+    }
+
+    pub fn width(&self) -> usize {
+        let mut w = 0usize;
+        for ch in &self._buf {
+            w += ch.width().unwrap_or(0);
+        }
+        w
     }
 
     pub fn clear(&mut self) {
@@ -158,6 +182,7 @@ impl Shell {
         .unwrap();
         stdout.flush()?;
         let mut cmd_buff = TextBuffer::new();
+        let mut insert_position = 0u16;
         let mut cursor_position = 0u16;
 
         for c in stdin.events() {
@@ -165,32 +190,40 @@ impl Shell {
             match ev {
                 Event::Key(key) => match key {
                     Key::Backspace => {
-                        if cursor_position > 0 {
-                            cmd_buff.remove((cursor_position - 1) as usize);
-                            cursor_position -= 1;
+                        if insert_position > 0 {
+                            let c = cmd_buff.remove((insert_position - 1) as usize);
+                            insert_position -= 1;
+                            cursor_position -= c.width().unwrap_or(0) as u16;
 
                             write!(stdout, "\r{}{}", termion::clear::CurrentLine, prompt)?;
                             write!(stdout, "{}", cmd_buff.to_string())?;
 
-                            let move_left = cmd_buff.len() - cursor_position as usize;
+                            let move_left = cmd_buff.width() - cursor_position as usize;
                             if move_left > 0 {
                                 write!(stdout, "{}", termion::cursor::Left(move_left as u16))?;
                             }
                         }
                     }
                     Key::Left => {
-                        if cursor_position > 0 {
-                            cursor_position -= 1;
-                            let _ = write!(stdout, "{}", termion::cursor::Left(1));
+                        if insert_position > 0 {
+                            let back_by = cmd_buff[insert_position as usize - 1usize]
+                                .width()
+                                .unwrap_or(0) as u16;
+                            cursor_position -= back_by;
+                            insert_position -= 1;
+                            let _ = write!(stdout, "{}", termion::cursor::Left(back_by));
                         }
                     }
                     // Key::ShiftLeft => todo!(),
                     // Key::AltLeft => todo!(),
                     // Key::CtrlLeft => todo!(),
                     Key::Right => {
-                        if cursor_position < cmd_buff.len() as u16 {
-                            cursor_position += 1;
-                            let _ = write!(stdout, "{}", termion::cursor::Right(1));
+                        if insert_position < cmd_buff.len() as u16 {
+                            let adv_by =
+                                cmd_buff[insert_position as usize].width().unwrap_or(0) as u16;
+                            cursor_position += adv_by;
+                            insert_position += 1;
+                            let _ = write!(stdout, "{}", termion::cursor::Right(adv_by));
                         }
                     }
                     // Key::ShiftRight => todo!(),
@@ -216,13 +249,9 @@ impl Shell {
                     Key::CtrlDown => {
                         modifiers.ctrl = true;
                     }
-                    Key::Home => {
-                        cursor_position = 0;
-                    }
+                    // Key::Home => {}
                     // Key::CtrlHome => todo!(),
-                    Key::End => {
-                        cursor_position = (cmd_buff.len() - 1) as u16;
-                    }
+                    // Key::End => {}
                     // Key::CtrlEnd => todo!(),
                     // Key::PageUp => todo!(),
                     // Key::PageDown => todo!(),
@@ -241,7 +270,8 @@ impl Shell {
                                 .tokenize()?;
                             cmd_buff.clear();
                             stdout.flush()?;
-                            let display_length = prompt.len() as u16 + cursor_position;
+                            let display_length = prompt.width() as u16 + cursor_position;
+                            insert_position = 0;
                             cursor_position = 0;
                             let _ = write!(
                                 stdout,
@@ -265,19 +295,21 @@ impl Shell {
                         } else if ch == '\t' {
                             // Handle completion
                         } else {
-                            let display_length = prompt.len() as u16 + cursor_position;
+                            let display_length = prompt.len() as u16 + insert_position;
                             let _ = write!(
                                 stdout,
-                                "{}{}{prompt}",
+                                "\r{}{}{prompt}",
                                 termion::clear::CurrentLine,
                                 termion::cursor::Left(display_length)
                             );
                             stdout.flush()?;
-                            cmd_buff.insert(cursor_position as usize, ch);
-                            cursor_position += 1;
+                            cursor_position += ch.width().unwrap_or(0) as u16;
+                            cmd_buff.insert(insert_position as usize, ch);
+                            insert_position += 1;
+
                             let _ = write!(stdout, "{}", cmd_buff.to_string());
                             stdout.flush()?;
-                            let move_left = cmd_buff.len() - cursor_position as usize;
+                            let move_left = cmd_buff.width() - cursor_position as usize;
                             if move_left > 0 {
                                 let _ =
                                     write!(stdout, "{}", termion::cursor::Left(move_left as u16));

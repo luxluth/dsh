@@ -1,5 +1,7 @@
 use std::{collections::HashMap, env, iter::Peekable};
 
+use crate::error::CmdParsingError;
+
 #[derive(Debug)]
 pub struct Cmd {
     pub variables_overrides: HashMap<String, String>,
@@ -191,8 +193,6 @@ fn test_expand_var_escape() {
 }
 
 struct CmdParser;
-#[derive(Debug, thiserror::Error)]
-pub enum CmdParsingError {}
 
 #[derive(Debug)]
 pub struct Col(u32);

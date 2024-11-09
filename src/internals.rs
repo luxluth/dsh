@@ -6,31 +6,14 @@ use std::{
     process::{Command, ExitStatus, Stdio},
 };
 
-use crate::cmd::Cmd;
+use crate::{cmd::Cmd, error::CommandError};
 
 pub type InternalFunc = fn(Cmd) -> Result<ExitStatus, CommandError>;
 pub type InternalFuncMap = HashMap<String, InternalFunc>;
 
-#[derive(thiserror::Error, Debug)]
-pub enum CommandError {
-    #[error("[io]: {0}")]
-    IOError(#[from] io::Error),
-    #[error("[{prog_name}]: {message}")]
-    Custom {
-        prog_name: String,
-        message: String,
-        status: i32,
-    },
-
-    #[error("[{1}]: Unable to launch this program\nCause: {0}")]
-    ChildSpawnError(io::Error, String, i32),
-    #[error("")]
-    ChildExit(io::Error, i32),
-}
-
 pub fn clear(_: Cmd) -> Result<ExitStatus, CommandError> {
     print!("\x1b[2J\x1b[H");
-    io::stdout().flush()?;
+    io::stdout().flush().unwrap();
     Ok(ExitStatus::from_raw(0))
 }
 
